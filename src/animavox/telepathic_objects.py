@@ -1,4 +1,3 @@
-import json
 import datetime
 import hashlib
 import json
@@ -35,6 +34,10 @@ def unwrap(val):
     return val
 
 
+# [TODO] There are a few things I'd like to integrate here:
+# * JSON-LD: Add context support for semantic meaning (e.g. some centrally hosted schema?)
+# * JSONPath: Adds query capabilities
+# * ...?
 class TelepathicObject:
     def __init__(self, data=None):
         self.doc = Doc()

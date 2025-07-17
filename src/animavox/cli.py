@@ -3,8 +3,8 @@ import sys
 
 import rich_click as click
 from rich import print
-from rich.pretty import Pretty
 from rich.json import JSON
+from rich.pretty import Pretty
 
 from . import __version__
 from ._utils import _get_info
@@ -77,15 +77,22 @@ def example(ofile: str):
 
     print("We can get a clean record of all the transactions to our object:")
     for txn in obj.get_transaction_log():
-        print(f"[{txn['timestamp']}] {txn['action']} {txn['path']}")
+        print(
+            f"[{txn['timestamp']} - {txn['transaction_id']}] [cyan]{txn['action']}[/cyan] {txn['path']}"
+        )
         if txn["action"] == "init":
-            print(f"  Initialized with: {json.dumps(txn['value'], indent=2)}")
+            print(f"  [green]Initialized data structure...")
         else:  # 'set' action
             print(
-                f"  Changed: {json.dumps(txn['value']['old'])} -> {json.dumps(txn['value']['new'])}"
+                f"  [green]Changed: {json.dumps(txn['value']['old'])} -> {json.dumps(txn['value']['new'])}"
             )
             if txn["message"]:
                 print(f"  Note: {txn['message']}")
+
+    print(
+        "That's pretty cool. We can do something even cooler though, you can save the transactions individually:"
+    )
+    obj.save_transaction_history("transactions")
 
     print("Now let's load the saved state:")
     print("First check if the file exists and is sensible:")

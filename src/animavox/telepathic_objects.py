@@ -108,12 +108,12 @@ class TelepathicObject:
             if isinstance(old_value, list) and isinstance(value, list):
                 # For array updates, we'll create a new CRDT array and replace the old one
                 crdt_array = crdt_wrap(value)
-                
+
                 # Get the parent object and key
-                parts = path.split('/')
+                parts = path.split("/")
                 key = parts[-1]
-                parent_path = '/'.join(parts[:-1]) if len(parts) > 1 else ''
-                
+                parent_path = "/".join(parts[:-1]) if len(parts) > 1 else ""
+
                 if parent_path:
                     # Set the new array at the parent path
                     try:
@@ -131,10 +131,10 @@ class TelepathicObject:
                 backing = unwrap(self._data)
                 dpath.util.new(backing, path, value)
                 self._data = crdt_wrap(backing)
-            
+
             # Update the document
             self.doc["data"] = self._data
-            
+
             # Record the transaction
             self._log_transaction(
                 "set", path, {"old": old_value, "new": value}, txn, message=message
@@ -409,7 +409,7 @@ class TelepathicObject:
             # Get the new value from the transaction
             new_value = txn["value"]["new"]
             path = txn["path"]
-            
+
             # Special handling for array updates
             try:
                 current_value = self.get_field(path)
@@ -417,61 +417,56 @@ class TelepathicObject:
                     # For array updates, we need to merge the arrays
                     # First, create a new array with the combined items
                     updated_array = current_value.copy()
-                    
+
                     # Add any new items that aren't already in the array
                     for item in new_value:
                         if item not in updated_array:
                             updated_array.append(item)
-                    
+
                     # Update the field with the merged array
-                    self.set_field(
-                        path,
-                        updated_array,
-                        message=txn.get("message", "")
-                    )
+                    self.set_field(path, updated_array, message=txn.get("message", ""))
                     return
             except KeyError:
                 pass  # Path doesn't exist yet, will be handled below
-            
+
             # For non-array updates or new paths, use the standard approach
             with self.doc.transaction() as t:
-                self.set_field(
-                    path,
-                    new_value,
-                    message=txn.get("message", "")
-                )
-                
+                self.set_field(path, new_value, message=txn.get("message", ""))
+
         elif txn["action"] == "init":
             # For init, we replace the entire document
             with self.doc.transaction() as t:
                 self._data = crdt_wrap(txn["value"])
                 self.doc["data"] = self._data
-                
+
                 # Log the init transaction
                 self._log_transaction(
                     "init",
                     "/",
                     txn["value"],
                     t,
-                    message="Initialized data structure..."
+                    message="Initialized data structure...",
                 )
         else:
             raise ValueError(f"Unknown transaction action: {txn['action']}")
 
     @staticmethod
-    def default_naming_strategy(txn_data, index=None):
+    def default_naming_strategy(txn_data, index):
         """
-        Default naming strategy using the first 16 characters of the transaction ID.
+        Default naming strategy using a 4-digit zero-padded sequential number
+        followed by the first 8 characters of the transaction ID.
 
         Args:
             txn_data (dict): The transaction data
-            index (int, optional): Index of the transaction in the log. Not used in this strategy.
+            index (int): The sequential index of the transaction
 
         Returns:
-            str: The first 16 characters of the transaction ID
+            str: Formatted filename with counter and transaction ID
         """
-        # Use the first 16 characters of the transaction ID for the filename
-        return txn_data.get("transaction_id", "")[:16]
+        # Ensure the index is stored in the transaction data
+        txn_data["sequence_number"] = index
+        # Format: 0001_<first-8-chars-of-id>
+        return f"{index:04d}_{txn_data.get('transaction_id', '')[:8]}"
 
     def save_transaction_history(self, directory, naming_strategy=None):
         """
@@ -503,22 +498,34 @@ class TelepathicObject:
     @classmethod
     def load_transaction_history(cls, directory, naming_strategy=None):
         """
-        Load all transactions from a directory.
+        Load all transactions from a directory, sorted by their sequence number.
 
         Args:
             directory (str): Directory containing transaction files
             naming_strategy (callable): Optional, only used for validation if provided
+
+        Returns:
+            list: List of transactions sorted by their sequence number
         """
         transactions = []
+        # First pass: load all transactions
         for filename in sorted(os.listdir(directory)):
             if filename.startswith("txn_") and filename.endswith(".json"):
                 path = os.path.join(directory, filename)
-                txn_data = cls.load_transaction(path)
-                if naming_strategy:
-                    expected_name = naming_strategy(txn_data)
-                    if not filename.startswith(f"txn_{expected_name}"):
-                        print(
-                            f"Warning: Filename doesn't match content hash for {filename}"
-                        )
-                transactions.append(txn_data)
+                try:
+                    # Use the class method to load the transaction
+                    txn_data = cls.load_transaction(path)
+
+                    # Extract sequence number from filename if not in data
+                    if "sequence_number" not in txn_data:
+                        parts = filename.split("_")
+                        if len(parts) > 1 and parts[1].isdigit():
+                            txn_data["sequence_number"] = int(parts[1])
+
+                    transactions.append(txn_data)
+                except Exception as e:
+                    print(f"Warning: Could not load transaction file {filename}: {e}")
+
+        # Sort transactions by sequence number
+        transactions.sort(key=lambda x: x.get("sequence_number", float("inf")))
         return transactions

@@ -64,9 +64,28 @@ def example(ofile: str):
     # Update a value:
     print("Now we update something. Let's set the age to 1000:")
     obj.set_field("root/collection/friends/0/age", 1000)
+    print("Let's also do a more complex update")
+    print("...adding 'new-tag' to the tags list:")
+    obj.set_field("root/collection/friends/0/tags", ["raven", "thought", "new-tag"])
+    print("...adding a new attribute 'birthday':")
+    obj.set_field("root/collection/friends/0/birthday", "2025-07-17")
+    print("...adding a new attribute 'hobbies' (test of lists)")
+    obj.set_field("root/collection/friends/0/hobbies", ["reading", "gaming", "hiking"])
     print(obj)
     print(Pretty(_get_info(obj)))
     print(JSON(obj.to_json()))
+
+    print("We can get a clean record of all the transactions to our object:")
+    for txn in obj.get_transaction_log():
+        print(f"[{txn['timestamp']}] {txn['action']} {txn['path']}")
+        if txn["action"] == "init":
+            print(f"  Initialized with: {json.dumps(txn['value'], indent=2)}")
+        else:  # 'set' action
+            print(
+                f"  Changed: {json.dumps(txn['value']['old'])} -> {json.dumps(txn['value']['new'])}"
+            )
+            if txn["message"]:
+                print(f"  Note: {txn['message']}")
 
     print("Now let's load the saved state:")
     print("First check if the file exists and is sensible:")

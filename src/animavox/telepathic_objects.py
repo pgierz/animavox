@@ -27,10 +27,29 @@ def crdt_wrap(value):
 
 
 def unwrap(val):
-    if isinstance(val, Map):
+    if isinstance(val, (str, int, float, bool, type(None))):
+        return val
+        
+    # Handle CRDT Map objects
+    if hasattr(val, "to_py") and hasattr(val, "items"):
+        try:
+            return {k: unwrap(v) for k, v in val.items()}
+        except RuntimeError:  # Handle case when document is not integrated
+            return val.to_py()
+            
+    # Handle CRDT Array objects
+    if hasattr(val, "to_py") and hasattr(val, "__getitem__") and hasattr(val, "__len__"):
+        try:
+            return [unwrap(v) for v in val]
+        except RuntimeError:  # Handle case when document is not integrated
+            return val.to_py()
+            
+    # Handle standard Python types
+    if isinstance(val, (list, tuple)):
+        return [unwrap(v) for v in val]
+    if isinstance(val, dict):
         return {k: unwrap(v) for k, v in val.items()}
-    elif isinstance(val, Array):
-        return [unwrap(item) for item in val]
+        
     return val
 
 
@@ -48,7 +67,8 @@ class TelepathicObject:
                 self.doc["data"] = self._data
                 self._log_transaction("init", "/", data, txn)
         else:
-            self._data = None
+            # Initialize with empty dictionary to support nested field setting
+            self._data = crdt_wrap({})
 
     def _generate_transaction_id(self, entry_data):
         """Generate a deterministic transaction ID from entry data."""
@@ -86,7 +106,7 @@ class TelepathicObject:
     def data(self):
         return self._data
 
-    def set_field(self, path, value, message=""):
+    def set_field(self, path: str, value, message: str = ""):
         """Set a value at a nested path (e.g. path='foo/bar/baz').
         This always enforces CRDT wrapping for the new value.
 
@@ -95,12 +115,28 @@ class TelepathicObject:
             value: The value to set
             message (str): Optional message describing the change
         """
-        # Get the old value for logging
-        old_value = None
-        try:
-            old_value = self.get_field(path)
-        except KeyError:
-            pass  # Path didn't exist before
+        # Initialize _data if it's None
+        if self._data is None:
+            # Create a simple dictionary structure for the path
+            parts = path.split('/')
+            current = {}
+            temp = current
+            for part in parts[:-1]:
+                temp[part] = {}
+                temp = temp[part]
+            temp[parts[-1]] = value
+            
+            # Wrap the entire structure at once
+            self._data = crdt_wrap(current)
+            
+            # Initialize the document
+            with self.doc.transaction() as txn:
+                self.doc["data"] = self._data
+                self._log_transaction("init", "/", current, txn)
+            return
+
+        # Get the old value if it exists
+        old_value = self.get_field(path)
 
         # Make the change
         with self.doc.transaction() as txn:
@@ -141,11 +177,22 @@ class TelepathicObject:
             )
 
     def get_field(self, path, default=None):
-        # Same "unwrap" trick, then use dpath.util.get
-        backing = unwrap(self._data)
+        # Handle case when _data is None
+        if self._data is None:
+            return default
+            
+        # Handle case when _data is not yet integrated into a document
         try:
+            if hasattr(self._data, 'doc') and self._data.doc is not None:
+                backing = unwrap(self._data)
+            else:
+                if hasattr(self._data, 'to_py'):
+                    backing = self._data.to_py()
+                else:
+                    backing = self._data
+                    
             return dpath.util.get(backing, path)
-        except KeyError:
+        except (KeyError, TypeError, RuntimeError):
             return default
 
     def __repr__(self):
@@ -163,8 +210,15 @@ class TelepathicObject:
 
     def save(self, path):
         """Save this object's collaborative state to a file."""
+        # Create a new empty document to get a complete update
+        empty_doc = Doc()
+        update = self.doc.get_update(empty_doc.get_state())
+        
+        # Save the update
         with open(path, "wb") as f:
-            f.write(self.doc.get_state())
+            f.write(update)
+            
+        print(f"Saved document state to {path} (size: {len(update)} bytes)")
 
     def save_from_scratch(self, path):
         """Dump a full, replayable update file for bootstrap or persistent restore."""
@@ -218,38 +272,28 @@ class TelepathicObject:
         doc = Doc()
         print(f"Created new document with initial state: {doc.get_state()!r}")
 
-        # Print document contents before applying update
-        print("Document contents before update:")
-        print(f"Document keys: {list(doc.keys())}")
-        print(f"Document state: {doc.get_state()!r}")
-
         try:
             # Apply the update to the document
             print("\nApplying update to document...")
             doc.apply_update(update)
             print("Successfully applied update")
+            
+            # Create a new instance with the document
+            print("\nCreating TelepathicObject from document...")
+            obj = cls._from_doc(doc)
+            
+            # Verify the document has a 'data' key
+            if "data" not in doc:
+                print("WARNING: No 'data' key in document after loading!")
+                print(f"Document keys: {list(doc.keys())}")
+                
+            return obj
+            
         except Exception as e:
-            print(f"ERROR: Failed to apply update: {e}")
+            print(f"ERROR: Failed to load document: {e}")
+            print(f"Update data: {update!r}")
+            print(f"Document state before error: {doc.get_state()!r}")
             raise
-
-        # Print document contents after applying update
-        print("\nDocument contents after update:")
-        print(f"Document keys: {list(doc.keys())}")
-        print(f"Document state: {doc.get_state()!r}")
-
-        # Print all document contents
-        print("\nDocument contents:")
-        for key in doc:
-            print(f"- {key}: {doc[key]!r}")
-
-        # Create a new instance with the document
-        print("\nCreating TelepathicObject from document...")
-        obj = cls._from_doc(doc)
-
-        # Ensure the document has a 'data' key
-        if "data" not in doc:
-            print("WARNING: No 'data' key in document after loading!")
-            print(f"Document keys: {list(doc.keys())}")
 
             # Create a new empty Map for data and attach it to the document
             with doc.transaction():
@@ -404,42 +448,37 @@ class TelepathicObject:
     def apply_transaction(self, txn):
         """Apply a transaction to the current object"""
         txn = self.deserialize_transaction(txn) if isinstance(txn, str) else txn
-
+        
         if txn["action"] == "set":
-            # Get the new value from the transaction
             new_value = txn["value"]["new"]
             path = txn["path"]
-
-            # Special handling for array updates
-            try:
-                current_value = self.get_field(path)
-                if isinstance(current_value, list) and isinstance(new_value, list):
-                    # For array updates, we need to merge the arrays
-                    # First, create a new array with the combined items
-                    updated_array = current_value.copy()
-
-                    # Add any new items that aren't already in the array
-                    for item in new_value:
-                        if item not in updated_array:
-                            updated_array.append(item)
-
-                    # Update the field with the merged array
-                    self.set_field(path, updated_array, message=txn.get("message", ""))
-                    return
-            except KeyError:
-                pass  # Path doesn't exist yet, will be handled below
-
-            # For non-array updates or new paths, use the standard approach
+            
+            # Handle array updates by replacing the entire array
+            if isinstance(new_value, list):
+                try:
+                    current_value = self.get_field(path)
+                    if not isinstance(current_value, list):
+                        # If current value is not a list, replace it with the new list
+                        with self.doc.transaction() as t:
+                            self.set_field(path, new_value.copy(), message=txn.get("message", ""))
+                        return
+                except KeyError:
+                    # Path doesn't exist yet, will be created by set_field
+                    pass
+            
+            # For non-array values or when we need to create a new array
             with self.doc.transaction() as t:
-                self.set_field(path, new_value, message=txn.get("message", ""))
-
+                # Use copy() for mutable values to avoid reference issues
+                self.set_field(
+                    path, 
+                    new_value.copy() if hasattr(new_value, "copy") else new_value, 
+                    message=txn.get("message", "")
+                )
+                
         elif txn["action"] == "init":
-            # For init, we replace the entire document
             with self.doc.transaction() as t:
                 self._data = crdt_wrap(txn["value"])
                 self.doc["data"] = self._data
-
-                # Log the init transaction
                 self._log_transaction(
                     "init",
                     "/",
@@ -497,8 +536,7 @@ class TelepathicObject:
 
     @classmethod
     def load_transaction_history(cls, directory, naming_strategy=None):
-        """
-        Load all transactions from a directory, sorted by their sequence number.
+        """Load all transactions from a directory, sorted by their sequence number.
 
         Args:
             directory (str): Directory containing transaction files

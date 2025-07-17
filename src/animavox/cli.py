@@ -1,17 +1,23 @@
+import json
 import sys
 
 import rich_click as click
 from rich import print
-from rich.json import JSON
 from rich.pretty import Pretty
+from rich.json import JSON
 
 from . import __version__
 from ._utils import _get_info
 from .telepathic_objects import TelepathicObject
 
 
-@click.command()
+@click.group()
 @click.version_option(version=__version__)
+def cli():
+    pass
+
+
+@cli.command()
 @click.option(
     "--ofile",
     type=click.Path(
@@ -22,7 +28,7 @@ from .telepathic_objects import TelepathicObject
     show_default=True,
     help="Path to save (and later reload) the TelepathicObject CRDT state.",
 )
-def main(ofile: str):
+def example(ofile: str):
     """A simple CLI tool for animavox."""
     print("[bold cyan]Welcome to animavox![/bold cyan]")
     print("Let's make an example object:")
@@ -81,6 +87,10 @@ def main(ofile: str):
     print(obj2)
     print(Pretty(_get_info(obj2)))
     print(JSON(obj2.to_json()))
+
+
+def main():
+    cli()
 
 
 if __name__ == "__main__":

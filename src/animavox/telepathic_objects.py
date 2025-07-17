@@ -1,11 +1,22 @@
 import json
 import datetime
+import hashlib
+import json
+import os
+
 import dpath.util
 from pycrdt import Array, Doc, Map
 
 
 class TelepathicObjectInvalidDocumentError(ValueError):
     """Raise when there is a problem with Document"""
+
+
+class DateTimeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime.datetime):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 def crdt_wrap(value):
@@ -36,24 +47,31 @@ class TelepathicObject:
         else:
             self._data = None
 
-    def _log_transaction(self, action, path, value, txn=None, message=""):
-        """Helper method to log transactions
+    def _generate_transaction_id(self, entry_data):
+        """Generate a deterministic transaction ID from entry data."""
+        # Create a copy to avoid modifying the original
+        data = entry_data.copy()
+        # Remove any existing ID to ensure consistency
+        data.pop("transaction_id", None)
+        # Create a stable timestamp (without microseconds) for ID generation
+        if "timestamp" in data and isinstance(data["timestamp"], datetime.datetime):
+            data["timestamp"] = data["timestamp"].replace(microsecond=0).isoformat()
+        # Convert to JSON and hash
+        data_str = json.dumps(data, sort_keys=True, cls=DateTimeEncoder)
+        return hashlib.sha256(data_str.encode()).hexdigest()
 
-        Args:
-            action (str): Type of action (e.g., 'init', 'set')
-            path (str): Path that was modified
-            value: The value that was set or changed
-            txn: The transaction object (optional)
-            message (str): Optional user message describing the change
-        """
+    def _log_transaction(self, action, path, value, txn=None, message=""):
+        """Log a transaction to the transaction log."""
+        timestamp = datetime.datetime.now()
         entry = {
-            "timestamp": datetime.datetime.now(),
+            "timestamp": timestamp,  # Keep full precision for display
             "action": action,
             "path": path,
             "value": value,
-            "transaction_id": id(txn) if txn else None,
-            "message": message,  # Add user message
+            "message": message,
         }
+        # Generate ID from the entry data
+        entry["transaction_id"] = self._generate_transaction_id(entry)
         self._transaction_log.append(entry)
         return entry
 
@@ -110,7 +128,11 @@ class TelepathicObject:
         return unwrap(self._data)
 
     def to_json(self):
-        return json.dumps(self.to_dict())
+        return json.dumps(
+            self.to_dict(),
+            cls=DateTimeEncoder,
+            sort_keys=True,
+        )
 
     def save(self, path):
         """Save this object's collaborative state to a file."""
@@ -265,3 +287,171 @@ class TelepathicObject:
         self.doc.apply_update(update_bytes)
         # Ensure self._data refers to the updated data
         self._data = self.doc["data"]
+
+    def serialize_transaction(self, txn):
+        """Serialize a transaction to a JSON-serializable dict"""
+        if not isinstance(txn, dict):
+            # Create a copy to avoid modifying the original
+            txn_dict = dict(txn)
+            # Strip microseconds for consistent ID generation
+            if "timestamp" in txn_dict and isinstance(
+                txn_dict["timestamp"], datetime.datetime
+            ):
+                txn_dict["timestamp"] = txn_dict["timestamp"].replace(microsecond=0)
+            txn = {
+                "timestamp": (
+                    txn_dict["timestamp"].isoformat()
+                    if isinstance(txn_dict["timestamp"], datetime.datetime)
+                    else txn_dict["timestamp"]
+                ),
+                "action": txn_dict["action"],
+                "path": txn_dict["path"],
+                "value": txn_dict["value"],
+                "message": txn_dict["message"],
+                "transaction_id": txn_dict.get(
+                    "transaction_id"
+                ),  # Keep existing ID if present
+            }
+        return txn
+
+    def deserialize_transaction(self, txn_data):
+        """Deserialize a transaction from a dict or JSON string"""
+        if isinstance(txn_data, str):
+            txn_data = json.loads(txn_data)
+
+        # Create a copy to avoid modifying the original
+        txn_dict = dict(txn_data)
+
+        # Parse timestamp if it's a string
+        if "timestamp" in txn_dict and isinstance(txn_dict["timestamp"], str):
+            txn_dict["timestamp"] = datetime.datetime.fromisoformat(
+                txn_dict["timestamp"]
+            )
+        # Strip microseconds for consistent ID generation
+        if "timestamp" in txn_dict and isinstance(
+            txn_dict["timestamp"], datetime.datetime
+        ):
+            txn_dict["timestamp"] = txn_dict["timestamp"].replace(microsecond=0)
+
+        # Create a new transaction with the deserialized data
+        txn = {
+            "timestamp": txn_dict["timestamp"],
+            "action": txn_dict["action"],
+            "path": txn_dict["path"],
+            "value": txn_dict["value"],
+            "message": txn_dict["message"],
+            "transaction_id": txn_dict.get(
+                "transaction_id"
+            ),  # Keep existing ID if present
+        }
+        # If no ID exists, generate one
+        if not txn["transaction_id"]:
+            txn["transaction_id"] = self._generate_transaction_id(txn)
+        return txn
+
+    def save_transaction(self, txn, path):
+        """Save a single transaction to a file"""
+        txn_data = self.serialize_transaction(txn)
+        with open(path, "w") as f:
+            json.dump(
+                txn_data,
+                f,
+                indent=2,
+                cls=DateTimeEncoder,
+                sort_keys=True,
+            )
+
+    @classmethod
+    def load_transaction(cls, path):
+        """Load a single transaction from a file"""
+        with open(path, "r") as f:
+            txn_data = json.load(f)
+        return txn_data  # Return as dict, can be deserialized with deserialize_transaction if needed
+
+    def apply_transaction(self, txn):
+        """Apply a transaction to the current object"""
+        txn = self.deserialize_transaction(txn) if isinstance(txn, str) else txn
+
+        # Verify transaction ID
+        expected_id = self._generate_transaction_id(
+            {k: v for k, v in txn.items() if k != "transaction_id"}
+        )
+        if txn.get("transaction_id") != expected_id:
+            raise ValueError("Transaction ID verification failed")
+
+        if txn["action"] == "set":
+            self.set_field(
+                txn["path"], txn["value"]["new"], message=txn.get("message", "")
+            )
+        elif txn["action"] == "init":
+            # For init, we replace the entire document
+            with self.doc.transaction() as t:
+                self._data = crdt_wrap(txn["value"])
+                self.doc["data"] = self._data
+        else:
+            raise ValueError(f"Unknown transaction action: {txn['action']}")
+
+    @staticmethod
+    def default_naming_strategy(txn_data, index=None):
+        """
+        Default naming strategy using the first 16 characters of the transaction ID.
+
+        Args:
+            txn_data (dict): The transaction data
+            index (int, optional): Index of the transaction in the log. Not used in this strategy.
+
+        Returns:
+            str: The first 16 characters of the transaction ID
+        """
+        # Use the first 16 characters of the transaction ID for the filename
+        return txn_data.get("transaction_id", "")[:16]
+
+    def save_transaction_history(self, directory, naming_strategy=None):
+        """
+        Save all transactions to individual files in a directory.
+
+        Args:
+            directory (str): Directory to save transaction files
+            naming_strategy (callable): Function that takes (txn_data, index) and returns a string
+                                    for the filename (without extension)
+        """
+        if naming_strategy is None:
+            naming_strategy = self.default_naming_strategy
+
+        os.makedirs(directory, exist_ok=True)
+
+        for i, txn in enumerate(self._transaction_log):
+            txn_data = self.serialize_transaction(txn)
+            filename_base = naming_strategy(txn_data, i)
+            path = os.path.join(directory, f"txn_{filename_base}.json")
+            with open(path, "w") as f:
+                json.dump(
+                    txn_data,
+                    f,
+                    indent=2,
+                    sort_keys=True,
+                    cls=DateTimeEncoder,
+                )
+
+    @classmethod
+    def load_transaction_history(cls, directory, naming_strategy=None):
+        """
+        Load all transactions from a directory.
+
+        Args:
+            directory (str): Directory containing transaction files
+            naming_strategy (callable): Optional, only used for validation if provided
+        """
+        transactions = []
+        for filename in sorted(os.listdir(directory)):
+            if filename.startswith("txn_") and filename.endswith(".json"):
+                path = os.path.join(directory, filename)
+                txn_data = cls.load_transaction(path)
+                if naming_strategy:
+                    expected_name = naming_strategy(txn_data)
+                    if not filename.startswith(f"txn_{expected_name}"):
+                        print(
+                            f"Warning: Filename doesn't match content hash for {filename}"
+                        )
+                transactions.append(txn_data)
+        return transactions

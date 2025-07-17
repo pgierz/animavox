@@ -1,14 +1,29 @@
 import json
-import sys
+import os
 
 import rich_click as click
 from rich import print
-from rich.json import JSON
 from rich.pretty import Pretty
+from rich.json import JSON
 
 from . import __version__
 from ._utils import _get_info
 from .telepathic_objects import TelepathicObject
+
+
+def print_transaction_log(txn_log):
+    for txn in txn_log:
+        print(
+            f"[{txn['timestamp']} - {txn['transaction_id']}] [cyan]{txn['action']}[/cyan] {txn['path']}"
+        )
+        if txn["action"] == "init":
+            print(f"  [green]Initialized data structure...")
+        else:  # 'set' action
+            print(
+                f"  [green]Changed: {json.dumps(txn['value']['old'])} -> {json.dumps(txn['value']['new'])}"
+            )
+            if txn["message"]:
+                print(f"  Note: {txn['message']}")
 
 
 @click.group()
@@ -76,18 +91,7 @@ def example(ofile: str):
     print(JSON(obj.to_json()))
 
     print("We can get a clean record of all the transactions to our object:")
-    for txn in obj.get_transaction_log():
-        print(
-            f"[{txn['timestamp']} - {txn['transaction_id']}] [cyan]{txn['action']}[/cyan] {txn['path']}"
-        )
-        if txn["action"] == "init":
-            print(f"  [green]Initialized data structure...")
-        else:  # 'set' action
-            print(
-                f"  [green]Changed: {json.dumps(txn['value']['old'])} -> {json.dumps(txn['value']['new'])}"
-            )
-            if txn["message"]:
-                print(f"  Note: {txn['message']}")
+    print_transaction_log(obj.get_transaction_log())
 
     print(
         "That's pretty cool. We can do something even cooler though, you can save the transactions individually:"
@@ -108,11 +112,62 @@ def example(ofile: str):
         "Looks good. Now remember, we saved *before* the update, so we should get back the original state before the age change:"
     )
     print("Now re-create the object:")
-    obj2 = TelepathicObject.load(ofile)
+    print("\n=== Loading saved state ===")
+    loaded_obj = TelepathicObject.load(ofile)
+    print(loaded_obj)
+    print(Pretty(_get_info(loaded_obj)))
+    print(JSON(loaded_obj.to_json()))
+    print(
+        "Note that this transaction log is different from what we had before in the new object:"
+    )
+    print_transaction_log(loaded_obj.get_transaction_log())
 
-    print(obj2)
-    print(Pretty(_get_info(obj2)))
-    print(JSON(obj2.to_json()))
+    # Now let's apply the saved transactions
+    print("\n=== Applying saved transactions ===")
+    transaction_dir = "transactions"
+    if os.path.exists(transaction_dir) and os.path.isdir(transaction_dir):
+        # Get all transaction files sorted by name (which should be in chronological order)
+        txn_files = sorted(
+            [f for f in os.listdir(transaction_dir) if f.endswith(".json")]
+        )
+
+        if not txn_files:
+            print("No transaction files found in the transactions directory.")
+            return
+
+        print(f"Found {len(txn_files)} transaction files to apply...")
+
+        for txn_file in txn_files:
+            txn_path = os.path.join(transaction_dir, txn_file)
+            try:
+                with open(txn_path, "r") as f:
+                    txn_data = json.load(f)
+
+                print(f"\nApplying transaction from {txn_file}:")
+                print(f"  Action: {txn_data['action']} {txn_data['path']}")
+                if txn_data["action"] == "set":
+                    print(
+                        f"  Change: {json.dumps(txn_data['value']['old'])} -> {json.dumps(txn_data['value']['new'])}"
+                    )
+
+                # Apply the transaction
+                loaded_obj.apply_transaction(txn_data)
+                print(
+                    f"  [green]✓ Successfully applied transaction {txn_data['transaction_id'][:8]}..."
+                )
+
+            except Exception as e:
+                print(f"  [red]✗ Failed to apply transaction {txn_file}: {str(e)}")
+
+        print("After applying transactions, log now is:")
+        print_transaction_log(loaded_obj.get_transaction_log())
+
+        print("\nFinal state after applying all transactions:")
+        print(loaded_obj)
+        print(loaded_obj.data)
+        print(loaded_obj.to_json())
+    else:
+        print(f"No transaction directory found at '{transaction_dir}'")
 
 
 def main():

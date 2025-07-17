@@ -87,8 +87,7 @@ class TelepathicObject:
         return self._data
 
     def set_field(self, path, value, message=""):
-        """
-        Set a value at a nested path (e.g. path='foo/bar/baz').
+        """Set a value at a nested path (e.g. path='foo/bar/baz').
         This always enforces CRDT wrapping for the new value.
 
         Args:
@@ -96,7 +95,7 @@ class TelepathicObject:
             value: The value to set
             message (str): Optional message describing the change
         """
-        # Get the old value before changing it
+        # Get the old value for logging
         old_value = None
         try:
             old_value = self.get_field(path)
@@ -104,14 +103,39 @@ class TelepathicObject:
             pass  # Path didn't exist before
 
         # Make the change
-        backing = unwrap(self._data)  # plain structure
-        dpath.util.new(backing, path, value)  # set the value at path
-        # Re-wrap the full structure back as CRDTs
-        self._data = crdt_wrap(backing)
-
-        # Record the transaction
         with self.doc.transaction() as txn:
+            # Handle array updates
+            if isinstance(old_value, list) and isinstance(value, list):
+                # For array updates, we'll create a new CRDT array and replace the old one
+                crdt_array = crdt_wrap(value)
+                
+                # Get the parent object and key
+                parts = path.split('/')
+                key = parts[-1]
+                parent_path = '/'.join(parts[:-1]) if len(parts) > 1 else ''
+                
+                if parent_path:
+                    # Set the new array at the parent path
+                    try:
+                        parent = self.get_field(parent_path)
+                        parent[key] = crdt_array
+                    except KeyError:
+                        # Parent doesn't exist, create it
+                        parent = {key: crdt_array}
+                        self.set_field(parent_path, parent, message)
+                else:
+                    # If no parent path, update the root
+                    self._data = crdt_wrap({key: crdt_array})
+            else:
+                # For non-array values, use the standard approach
+                backing = unwrap(self._data)
+                dpath.util.new(backing, path, value)
+                self._data = crdt_wrap(backing)
+            
+            # Update the document
             self.doc["data"] = self._data
+            
+            # Record the transaction
             self._log_transaction(
                 "set", path, {"old": old_value, "new": value}, txn, message=message
             )
@@ -276,6 +300,12 @@ class TelepathicObject:
         obj = cls.__new__(cls)
         obj.doc = doc
 
+        # Initialize the transaction log
+        # FIXME PG
+        obj._transaction_log = []
+        with obj.doc.transaction() as txn:
+            obj._log_transaction("init", "/", None, txn)
+
         # Initialize _data to None - it will be set by the caller
         obj._data = None
 
@@ -364,8 +394,8 @@ class TelepathicObject:
                 sort_keys=True,
             )
 
-    @classmethod
-    def load_transaction(cls, path):
+    @staticmethod
+    def load_transaction(path):
         """Load a single transaction from a file"""
         with open(path, "r") as f:
             txn_data = json.load(f)
@@ -375,22 +405,56 @@ class TelepathicObject:
         """Apply a transaction to the current object"""
         txn = self.deserialize_transaction(txn) if isinstance(txn, str) else txn
 
-        # Verify transaction ID
-        expected_id = self._generate_transaction_id(
-            {k: v for k, v in txn.items() if k != "transaction_id"}
-        )
-        if txn.get("transaction_id") != expected_id:
-            raise ValueError("Transaction ID verification failed")
-
         if txn["action"] == "set":
-            self.set_field(
-                txn["path"], txn["value"]["new"], message=txn.get("message", "")
-            )
+            # Get the new value from the transaction
+            new_value = txn["value"]["new"]
+            path = txn["path"]
+            
+            # Special handling for array updates
+            try:
+                current_value = self.get_field(path)
+                if isinstance(current_value, list) and isinstance(new_value, list):
+                    # For array updates, we need to merge the arrays
+                    # First, create a new array with the combined items
+                    updated_array = current_value.copy()
+                    
+                    # Add any new items that aren't already in the array
+                    for item in new_value:
+                        if item not in updated_array:
+                            updated_array.append(item)
+                    
+                    # Update the field with the merged array
+                    self.set_field(
+                        path,
+                        updated_array,
+                        message=txn.get("message", "")
+                    )
+                    return
+            except KeyError:
+                pass  # Path doesn't exist yet, will be handled below
+            
+            # For non-array updates or new paths, use the standard approach
+            with self.doc.transaction() as t:
+                self.set_field(
+                    path,
+                    new_value,
+                    message=txn.get("message", "")
+                )
+                
         elif txn["action"] == "init":
             # For init, we replace the entire document
             with self.doc.transaction() as t:
                 self._data = crdt_wrap(txn["value"])
                 self.doc["data"] = self._data
+                
+                # Log the init transaction
+                self._log_transaction(
+                    "init",
+                    "/",
+                    txn["value"],
+                    t,
+                    message="Initialized data structure..."
+                )
         else:
             raise ValueError(f"Unknown transaction action: {txn['action']}")
 

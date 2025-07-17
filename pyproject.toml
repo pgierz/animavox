@@ -1,0 +1,19 @@
+[project]
+authors = [{name = "Paul Gierz", email = "pgierz@awi.de"}]
+dependencies = []
+name = "animavox"
+requires-python = ">= 3.11"
+version = "0.1.0"
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["macos", "linux"]
+
+[tool.pixi.pypi-dependencies]
+animavox = { path = ".", editable = true }
+
+[tool.pixi.tasks]

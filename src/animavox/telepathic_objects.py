@@ -4,7 +4,7 @@ import json
 import os
 
 import dpath.util
-from pycrdt import Array, Doc, Map
+from pycrdt import Array, Doc, Map, Transaction
 
 
 class TelepathicObjectInvalidDocumentError(ValueError):
@@ -15,6 +15,99 @@ class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, datetime.datetime):
             return obj.isoformat()
+        return super().default(obj)
+
+
+class TelepathicObjectTransaction:
+    """Represents a single transaction in a TelepathicObject.
+
+    This class encapsulates all the information about a transaction including
+    the action performed, the data changed, and the associated CRDT transaction.
+    """
+
+    def __init__(self, action, path, value, txn=None, message=""):
+        """Initialize a new transaction.
+
+        Args:
+            action (str): The type of action (e.g., 'set', 'init', 'delete')
+            path (str): The path where the change occurred
+            value: The new value (or dict with 'old' and 'new' for changes)
+            txn: The underlying CRDT transaction object
+            message (str): Human-readable description of the change
+        """
+        self.timestamp = datetime.datetime.now().replace(microsecond=0)
+        self.action = action
+        self.path = path
+        self.value = value
+        self.txn = txn
+        self.message = message
+        self.transaction_id = self._generate_id()
+
+    def _generate_id(self):
+        """Generate a deterministic ID for this transaction."""
+        data = {
+            "timestamp": self.timestamp.isoformat(),
+            "action": self.action,
+            "path": self.path,
+            "value": self.value,
+            "message": self.message,
+        }
+        data_str = json.dumps(data, sort_keys=True, cls=DateTimeEncoder)
+        return hashlib.sha256(data_str.encode()).hexdigest()
+
+    def to_dict(self):
+        """Convert the transaction to a dictionary for serialization."""
+        return {
+            "timestamp": self.timestamp,
+            "action": self.action,
+            "path": self.path,
+            "value": self.value,
+            "message": self.message,
+            "transaction_id": self.transaction_id,
+            # Note: We don't serialize the txn object here as it's complex
+            # and can be reconstructed from the other fields if needed
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        """Create a transaction from a dictionary."""
+        if isinstance(data, str):
+            data = json.loads(data)
+
+        # Convert timestamp string back to datetime if needed
+        if isinstance(data.get("timestamp"), str):
+            data["timestamp"] = datetime.datetime.fromisoformat(data["timestamp"])
+
+        # Create a new transaction with the deserialized data
+        txn = cls.__new__(cls)
+        txn.timestamp = data["timestamp"]
+        txn.action = data["action"]
+        txn.path = data["path"]
+        txn.value = data["value"]
+        txn.message = data.get("message", "")
+        txn.transaction_id = data.get("transaction_id")
+        txn.txn = None  # The original transaction object can't be deserialized
+
+        # If transaction_id wasn't in the data, generate it
+        if not txn.transaction_id:
+            txn.transaction_id = txn._generate_id()
+
+        return txn
+
+    def __repr__(self):
+        return f"<TelepathicObjectTransaction {self.action}@{self.path} id={self.transaction_id[:8]}>"
+
+
+class TransactionEncoder(DateTimeEncoder):
+    def default(self, obj):
+        if isinstance(obj, Transaction):
+            # For pycrdt Transaction objects, return a minimal representation
+            return {
+                "__type__": "pycrdt.Transaction",
+                "state": obj.get_state() if hasattr(obj, "get_state") else str(obj),
+            }
+        elif isinstance(obj, TelepathicObjectTransaction):
+            return obj.to_dict()
         return super().default(obj)
 
 
@@ -29,27 +122,31 @@ def crdt_wrap(value):
 def unwrap(val):
     if isinstance(val, (str, int, float, bool, type(None))):
         return val
-        
+
     # Handle CRDT Map objects
     if hasattr(val, "to_py") and hasattr(val, "items"):
         try:
             return {k: unwrap(v) for k, v in val.items()}
         except RuntimeError:  # Handle case when document is not integrated
             return val.to_py()
-            
+
     # Handle CRDT Array objects
-    if hasattr(val, "to_py") and hasattr(val, "__getitem__") and hasattr(val, "__len__"):
+    if (
+        hasattr(val, "to_py")
+        and hasattr(val, "__getitem__")
+        and hasattr(val, "__len__")
+    ):
         try:
             return [unwrap(v) for v in val]
         except RuntimeError:  # Handle case when document is not integrated
             return val.to_py()
-            
+
     # Handle standard Python types
     if isinstance(val, (list, tuple)):
         return [unwrap(v) for v in val]
     if isinstance(val, dict):
         return {k: unwrap(v) for k, v in val.items()}
-        
+
     return val
 
 
@@ -70,37 +167,33 @@ class TelepathicObject:
             # Initialize with empty dictionary to support nested field setting
             self._data = crdt_wrap({})
 
-    def _generate_transaction_id(self, entry_data):
-        """Generate a deterministic transaction ID from entry data."""
-        # Create a copy to avoid modifying the original
-        data = entry_data.copy()
-        # Remove any existing ID to ensure consistency
-        data.pop("transaction_id", None)
-        # Create a stable timestamp (without microseconds) for ID generation
-        if "timestamp" in data and isinstance(data["timestamp"], datetime.datetime):
-            data["timestamp"] = data["timestamp"].replace(microsecond=0).isoformat()
-        # Convert to JSON and hash
-        data_str = json.dumps(data, sort_keys=True, cls=DateTimeEncoder)
-        return hashlib.sha256(data_str.encode()).hexdigest()
+    # Removed _generate_transaction_id as it's now handled by TelepathicObjectTransaction
 
     def _log_transaction(self, action, path, value, txn=None, message=""):
-        """Log a transaction to the transaction log."""
-        timestamp = datetime.datetime.now()
-        entry = {
-            "timestamp": timestamp,  # Keep full precision for display
-            "action": action,
-            "path": path,
-            "value": value,
-            "message": message,
-        }
-        # Generate ID from the entry data
-        entry["transaction_id"] = self._generate_transaction_id(entry)
-        self._transaction_log.append(entry)
-        return entry
+        """Log a transaction to the transaction log.
+
+        Args:
+            action (str): The type of action (e.g., 'set', 'init')
+            path (str): The path where the change occurred
+            value: The new value or change information
+            txn: The underlying CRDT transaction object
+            message (str): Human-readable description of the change
+
+        Returns:
+            TelepathicObjectTransaction: The created transaction object
+        """
+        transaction = TelepathicObjectTransaction(
+            action=action, path=path, value=value, txn=txn, message=message
+        )
+        self._transaction_log.append(transaction)
+        return transaction
 
     def get_transaction_log(self):
         """Return the transaction history"""
         return self._transaction_log
+
+    def get_transactions(self):
+        return [t.txn for t in self._transaction_log]
 
     @property
     def data(self):
@@ -118,17 +211,17 @@ class TelepathicObject:
         # Initialize _data if it's None
         if self._data is None:
             # Create a simple dictionary structure for the path
-            parts = path.split('/')
+            parts = path.split("/")
             current = {}
             temp = current
             for part in parts[:-1]:
                 temp[part] = {}
                 temp = temp[part]
             temp[parts[-1]] = value
-            
+
             # Wrap the entire structure at once
             self._data = crdt_wrap(current)
-            
+
             # Initialize the document
             with self.doc.transaction() as txn:
                 self.doc["data"] = self._data
@@ -180,17 +273,17 @@ class TelepathicObject:
         # Handle case when _data is None
         if self._data is None:
             return default
-            
+
         # Handle case when _data is not yet integrated into a document
         try:
-            if hasattr(self._data, 'doc') and self._data.doc is not None:
+            if hasattr(self._data, "doc") and self._data.doc is not None:
                 backing = unwrap(self._data)
             else:
-                if hasattr(self._data, 'to_py'):
+                if hasattr(self._data, "to_py"):
                     backing = self._data.to_py()
                 else:
                     backing = self._data
-                    
+
             return dpath.util.get(backing, path)
         except (KeyError, TypeError, RuntimeError):
             return default
@@ -204,7 +297,7 @@ class TelepathicObject:
     def to_json(self):
         return json.dumps(
             self.to_dict(),
-            cls=DateTimeEncoder,
+            cls=TransactionEncoder,
             sort_keys=True,
         )
 
@@ -213,11 +306,11 @@ class TelepathicObject:
         # Create a new empty document to get a complete update
         empty_doc = Doc()
         update = self.doc.get_update(empty_doc.get_state())
-        
+
         # Save the update
         with open(path, "wb") as f:
             f.write(update)
-            
+
         print(f"Saved document state to {path} (size: {len(update)} bytes)")
 
     def save_from_scratch(self, path):
@@ -240,6 +333,9 @@ class TelepathicObject:
             f.write(update)
 
         print(f"\nSaved document update: {update!r}")
+        print(f"Update size: {len(update)} bytes")
+        print(f"Update type: {type(update)}")
+
         print(f"Document keys after saving: {list(self.doc.keys())}")
         print(f"Data type after saving: {type(self._data)}")
         print(f"Data content after saving: {self._data}")
@@ -253,6 +349,7 @@ class TelepathicObject:
             print(f"Test document keys: {list(test_doc.keys())}")
             if "data" in test_doc:
                 print(f"Test document data: {test_doc['data']}")
+                assert test_doc["data"] == self._data
             else:
                 print("WARNING: 'data' key not found in test document")
         except Exception as e:
@@ -277,46 +374,46 @@ class TelepathicObject:
             print("\nApplying update to document...")
             doc.apply_update(update)
             print("Successfully applied update")
-            
+
             # Create a new instance with the document
             print("\nCreating TelepathicObject from document...")
-            obj = cls._from_doc(doc)
-            
-            # Verify the document has a 'data' key
-            if "data" not in doc:
-                print("WARNING: No 'data' key in document after loading!")
-                print(f"Document keys: {list(doc.keys())}")
-                
-            return obj
-            
+            return cls._from_doc(doc)
+
         except Exception as e:
             print(f"ERROR: Failed to load document: {e}")
             print(f"Update data: {update!r}")
             print(f"Document state before error: {doc.get_state()!r}")
-            raise
+            raise e
 
-            # Create a new empty Map for data and attach it to the document
+    @classmethod
+    def _from_doc(cls, doc):
+        # Helper to construct directly from Doc instance
+        obj = cls.__new__(cls)
+        obj.doc = doc
+        obj._transaction_log = []
+
+        # Initialize _data from the document
+        if "data" in doc and doc["data"] is not None:
+            # If the document has data, use it directly
+            obj._data = doc["data"]
+            print(f"\nLoaded data from document: {obj._data}")
+            print(f"Type of loaded data: {type(obj._data)}")
+        else:
+            print("WARNING: No 'data' key in document or data is None!")
+            print(f"Document keys: {list(doc.keys())}")
+
+            # Create a new empty Map for data if it doesn't exist
             with doc.transaction():
                 obj._data = Map()
                 doc["data"] = obj._data
             print("Created new empty data map")
-        else:
-            # Get the data from the document
-            obj._data = doc["data"]
-            print(f"\nLoaded data from document: {obj._data}")
-            print(f"Type of loaded data: {type(obj._data)}")
 
-            # If data is None, try to reconstruct from document
-            if obj._data is None:
-                print("WARNING: Loaded data is None!")
-                print("Attempting to reconstruct data from document...")
-                with doc.transaction():
-                    obj._data = Map()
-                    doc["data"] = obj._data  # Make sure it's attached to the document
-                    for key in doc:
-                        if key != "data":  # Skip the data key itself
-                            obj._data[key] = doc[key]
-                print("Reconstructed data")
+        # Ensure _data is properly initialized
+        if not hasattr(obj, "_data") or obj._data is None:
+            with doc.transaction():
+                obj._data = Map()
+                doc["data"] = obj._data
+            print("Initialized empty data map")
 
         print("\nFinal object state:")
         print(f"Type: {type(obj)}")
@@ -338,23 +435,6 @@ class TelepathicObject:
         print("\n=== Finished loading ===")
         return obj
 
-    @classmethod
-    def _from_doc(cls, doc):
-        # Helper to construct directly from Doc instance
-        obj = cls.__new__(cls)
-        obj.doc = doc
-
-        # Initialize the transaction log
-        # FIXME PG
-        obj._transaction_log = []
-        with obj.doc.transaction() as txn:
-            obj._log_transaction("init", "/", None, txn)
-
-        # Initialize _data to None - it will be set by the caller
-        obj._data = None
-
-        return obj
-
     def get_update(self):
         """Get the latest state update to broadcast to peers."""
         return self.doc.get_update()
@@ -366,93 +446,111 @@ class TelepathicObject:
         self._data = self.doc["data"]
 
     def serialize_transaction(self, txn):
-        """Serialize a transaction to a JSON-serializable dict"""
-        if not isinstance(txn, dict):
-            # Create a copy to avoid modifying the original
-            txn_dict = dict(txn)
-            # Strip microseconds for consistent ID generation
-            if "timestamp" in txn_dict and isinstance(
-                txn_dict["timestamp"], datetime.datetime
-            ):
-                txn_dict["timestamp"] = txn_dict["timestamp"].replace(microsecond=0)
-            txn = {
-                "timestamp": (
-                    txn_dict["timestamp"].isoformat()
-                    if isinstance(txn_dict["timestamp"], datetime.datetime)
-                    else txn_dict["timestamp"]
-                ),
-                "action": txn_dict["action"],
-                "path": txn_dict["path"],
-                "value": txn_dict["value"],
-                "message": txn_dict["message"],
-                "transaction_id": txn_dict.get(
-                    "transaction_id"
-                ),  # Keep existing ID if present
-            }
-        return txn
+        """Serialize a transaction to a JSON-serializable dict.
+
+        Args:
+            txn: A transaction object or dict to serialize
+
+        Returns:
+            dict: A JSON-serializable dictionary
+        """
+        if isinstance(txn, TelepathicObjectTransaction):
+            return txn.to_dict()
+        elif isinstance(txn, dict):
+            # Handle legacy dict format
+            return txn
+        elif txn is None:
+            return None
+        else:
+            raise ValueError(f"Cannot serialize transaction of type {type(txn)}")
 
     def deserialize_transaction(self, txn_data):
-        """Deserialize a transaction from a dict or JSON string"""
+        """Deserialize a transaction from a dict or JSON string.
+
+        Args:
+            txn_data: A JSON string or dict containing transaction data
+
+        Returns:
+            TelepathicObjectTransaction: The deserialized transaction
+        """
         if isinstance(txn_data, str):
             txn_data = json.loads(txn_data)
 
-        # Create a copy to avoid modifying the original
-        txn_dict = dict(txn_data)
+        if isinstance(txn_data, dict):
+            # Check if this is a legacy format transaction
+            if "action" in txn_data and "path" in txn_data:
+                return TelepathicObjectTransaction.from_dict(txn_data)
 
-        # Parse timestamp if it's a string
-        if "timestamp" in txn_dict and isinstance(txn_dict["timestamp"], str):
-            txn_dict["timestamp"] = datetime.datetime.fromisoformat(
-                txn_dict["timestamp"]
-            )
-        # Strip microseconds for consistent ID generation
-        if "timestamp" in txn_dict and isinstance(
-            txn_dict["timestamp"], datetime.datetime
-        ):
-            txn_dict["timestamp"] = txn_dict["timestamp"].replace(microsecond=0)
-
-        # Create a new transaction with the deserialized data
-        txn = {
-            "timestamp": txn_dict["timestamp"],
-            "action": txn_dict["action"],
-            "path": txn_dict["path"],
-            "value": txn_dict["value"],
-            "message": txn_dict["message"],
-            "transaction_id": txn_dict.get(
-                "transaction_id"
-            ),  # Keep existing ID if present
-        }
-        # If no ID exists, generate one
-        if not txn["transaction_id"]:
-            txn["transaction_id"] = self._generate_transaction_id(txn)
-        return txn
+        raise ValueError(f"Invalid transaction data format: {txn_data}")
 
     def save_transaction(self, txn, path):
-        """Save a single transaction to a file"""
-        txn_data = self.serialize_transaction(txn)
+        """Save a single transaction to a file.
+
+        Args:
+            txn: The transaction to save (can be a dict or TelepathicObjectTransaction)
+            path (str): Path to save the transaction to
+        """
+        if not isinstance(txn, (dict, TelepathicObjectTransaction)):
+            txn = self.serialize_transaction(txn)
+
         with open(path, "w") as f:
             json.dump(
-                txn_data,
+                txn,
                 f,
                 indent=2,
-                cls=DateTimeEncoder,
+                cls=TransactionEncoder,
                 sort_keys=True,
             )
 
-    @staticmethod
-    def load_transaction(path):
-        """Load a single transaction from a file"""
+    @classmethod
+    def load_transaction(cls, path):
+        """Load a single transaction from a file.
+
+        Args:
+            path (str): Path to the transaction file
+
+        Returns:
+            TelepathicObjectTransaction: The loaded transaction
+        """
         with open(path, "r") as f:
             txn_data = json.load(f)
-        return txn_data  # Return as dict, can be deserialized with deserialize_transaction if needed
+
+        # Handle both old and new formats
+        if isinstance(txn_data, dict) and "action" in txn_data and "path" in txn_data:
+            return TelepathicObjectTransaction.from_dict(txn_data)
+
+        raise ValueError(f"Invalid transaction format in {path}")
 
     def apply_transaction(self, txn):
-        """Apply a transaction to the current object"""
-        txn = self.deserialize_transaction(txn) if isinstance(txn, str) else txn
-        
-        if txn["action"] == "set":
-            new_value = txn["value"]["new"]
-            path = txn["path"]
-            
+        """Apply a transaction to the current object.
+
+        Args:
+            txn: A transaction (TelepathicObjectTransaction, dict, or JSON string)
+
+        Returns:
+            TelepathicObjectTransaction: The applied transaction
+
+        Raises:
+            ValueError: If the transaction is invalid or of unknown type
+        """
+        # Deserialize if needed
+        if isinstance(txn, str):
+            txn = self.deserialize_transaction(txn)
+        elif isinstance(txn, dict):
+            txn = TelepathicObjectTransaction.from_dict(txn)
+        elif not isinstance(txn, TelepathicObjectTransaction):
+            raise ValueError(f"Unsupported transaction type: {type(txn)}")
+
+        if txn.action == "set":
+            if not isinstance(txn.value, dict) or "new" not in txn.value:
+                raise ValueError(
+                    "Invalid transaction value format. Expected dict with 'new' key."
+                )
+
+            new_value = txn.value["new"]
+            path = txn.path
+            message = txn.message or ""
+
             # Handle array updates by replacing the entire array
             if isinstance(new_value, list):
                 try:
@@ -460,34 +558,36 @@ class TelepathicObject:
                     if not isinstance(current_value, list):
                         # If current value is not a list, replace it with the new list
                         with self.doc.transaction() as t:
-                            self.set_field(path, new_value.copy(), message=txn.get("message", ""))
-                        return
+                            self.set_field(path, new_value.copy(), message=message)
+                        return txn
                 except KeyError:
                     # Path doesn't exist yet, will be created by set_field
                     pass
-            
+
             # For non-array values or when we need to create a new array
             with self.doc.transaction() as t:
                 # Use copy() for mutable values to avoid reference issues
                 self.set_field(
-                    path, 
-                    new_value.copy() if hasattr(new_value, "copy") else new_value, 
-                    message=txn.get("message", "")
+                    path,
+                    new_value.copy() if hasattr(new_value, "copy") else new_value,
+                    message=message,
                 )
-                
-        elif txn["action"] == "init":
+
+        elif txn.action == "init":
             with self.doc.transaction() as t:
-                self._data = crdt_wrap(txn["value"])
+                self._data = crdt_wrap(txn.value)
                 self.doc["data"] = self._data
                 self._log_transaction(
                     "init",
                     "/",
-                    txn["value"],
+                    txn.value,
                     t,
-                    message="Initialized data structure...",
+                    message=txn.message or "Initialized data structure...",
                 )
         else:
-            raise ValueError(f"Unknown transaction action: {txn['action']}")
+            raise ValueError(f"Unknown transaction action: {txn.action}")
+
+        return txn
 
     @staticmethod
     def default_naming_strategy(txn_data, index):
@@ -531,7 +631,7 @@ class TelepathicObject:
                     f,
                     indent=2,
                     sort_keys=True,
-                    cls=DateTimeEncoder,
+                    cls=TransactionEncoder,
                 )
 
     @classmethod
@@ -567,3 +667,38 @@ class TelepathicObject:
         # Sort transactions by sequence number
         transactions.sort(key=lambda x: x.get("sequence_number", float("inf")))
         return transactions
+
+    def pprint_transaction_log(self):
+        log = self.get_transaction_log()
+
+        # Set column widths for neatness
+        col_widths = {
+            "timestamp": 19,  # 'YYYY-MM-DD HH:MM:SS'
+            "action": 6,
+            "path": 30,
+            "message": 20,
+            "transaction_id": 18,
+        }
+
+        # Header
+        lstring = "\n│ LOG:"
+        lstring += "\n│"
+        for entry in log:
+            # Format timestamp
+            ts = entry["timestamp"].strftime("%Y-%m-%d %H:%M:%S")
+            action = entry["action"]
+            path = entry["path"]
+            message = entry["message"]
+            tid = entry["transaction_id"][: col_widths["transaction_id"]]
+
+            # Format the change summary
+            val = entry["value"]
+            change = f"{val['old']} → {val['new']}"
+
+            # Print the log entry using lines, arrows, etc.
+            lstring += "\n│"
+            lstring += f"\n├─ * {ts:<{col_widths['timestamp']}} [{action:<{col_widths['action']}}] {path:<{col_widths['path']}}"
+            lstring += f"\n│    ↳ {change}  "
+            lstring += f"\n│    {message:<{col_widths['message']}} | id: {tid}"
+        print(lstring)
+        return lstring

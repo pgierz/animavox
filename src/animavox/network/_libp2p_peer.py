@@ -5,12 +5,11 @@ from __future__ import annotations
 import json
 import logging
 
-from libp2p import new_node
+from libp2p import new_host
 from libp2p.host.basic_host import BasicHost
 from libp2p.peer.id import ID as PeerID
 from libp2p.peer.peerinfo import info_from_p2p_addr
 from libp2p.pubsub.floodsub import FloodSub
-from libp2p.typing import TProtocol
 
 from ._abc import AbstractPeer, MessageHandler, StatusHandler
 from .message import Message, PeerInfo
@@ -85,9 +84,8 @@ class LibP2PPeer(AbstractPeer):
 
         try:
             # Initialize libp2p host
-            self._host = await new_node(
+            self._host = await new_host(
                 transport_opt=["/ip4/0.0.0.0/tcp/0"],  # Let OS choose port
-                secure_channels=True,
             )
 
             # Initialize pubsub for message broadcasting
@@ -95,7 +93,7 @@ class LibP2PPeer(AbstractPeer):
 
             # Set up protocol handlers
             await self._host.set_stream_handler(
-                TProtocol("/animavox/1.0.0"),
+                "/animavox/1.0.0",
                 self._handle_stream,
             )
 
@@ -213,7 +211,7 @@ class LibP2PPeer(AbstractPeer):
             # Find the peer and open a stream
             peer_id = PeerID.from_base58(recipient_id)
             stream = await self._host.new_stream(
-                peer_id, [TProtocol("/animavox/1.0.0")]
+                peer_id, ["/animavox/1.0.0"]
             )
 
             # Send the message

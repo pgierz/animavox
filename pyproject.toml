@@ -4,7 +4,7 @@ dependencies = [
     "pycrdt>=0.12.26,<0.13",
     "rich-click>=1.8.9,<2",
     "dpath>=2.2.0,<3", 
-    "asyncio>=3.4.3,<4",
+    "asyncio>=3.4.3,<4", "libp2p>=0.2.9,<0.3",
 ]
 name = "animavox"
 description = "A tool for managing and versioning data structures with CRDTs"
@@ -66,8 +66,8 @@ pip = ">=25.1.1,<26"
 [tool.pixi.pypi-dependencies]
 animavox = { path = ".", editable = true }
 tellus = { path = "./vendor/tellus", editable = true }
-libp2p = { path = "./vendor/py-libp2p", editable = true }
-fastecdsa = { path = "./vendor/fastecdsa", editable = true }
+# libp2p = { path = "./vendor/py-libp2p", editable = true }
+# fastecdsa = { path = "./vendor/fastecdsa", editable = true }
 
 [tool.pixi.tasks]
 animavox = "python -m animavox.cli"

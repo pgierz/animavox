@@ -3,7 +3,8 @@ authors = [{name = "Paul Gierz", email = "pgierz@awi.de"}]
 dependencies = [
     "pycrdt>=0.12.26,<0.13",
     "rich-click>=1.8.9,<2",
-    "dpath>=2.2.0,<3", "asyncio>=3.4.3,<4",
+    "dpath>=2.2.0,<3", 
+    "asyncio>=3.4.3,<4",
 ]
 name = "animavox"
 description = "A tool for managing and versioning data structures with CRDTs"
@@ -51,6 +52,7 @@ pytest = ">=7.4.0"
 pytest-cov = ">=4.1.0"
 pytest-mock = ">=3.11.1"
 pytest-xdist = ">=3.3.1"
+pytest-asyncio = ">=1.0.0,<2"
 black = ">=23.7.0"
 isort = ">=5.12.0"
 mypy = ">=1.5.0"
@@ -58,11 +60,14 @@ ruff = ">=0.0.284"
 fsspec = ">=2025.7.0,<2026"
 aiohttp = ">=3.12.14,<4"
 loguru = ">=0.7.3,<0.8"
+pip = ">=25.1.1,<26"
 
 # Install the package in development mode
 [tool.pixi.pypi-dependencies]
 animavox = { path = ".", editable = true }
-tellus = { path = "../tellus", editable = true }
+tellus = { path = "./vendor/tellus", editable = true }
+libp2p = { path = "./vendor/py-libp2p", editable = true }
+fastecdsa = { path = "./vendor/fastecdsa", editable = true }
 
 [tool.pixi.tasks]
 animavox = "python -m animavox.cli"

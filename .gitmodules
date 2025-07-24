@@ -1,3 +1,0 @@
-[submodule "vendor/tellus"]
-	path = vendor/tellus
-	url = https://github.com/pgierz/tellus.git

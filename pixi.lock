@@ -117,7 +117,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/a8/fe/1ea0ba0896dfa47186692655b86db3214c4b7c9e0e76c7b1dc257d101ab1/varint-1.0.2.tar.gz
       - pypi: https://files.pythonhosted.org/packages/d1/fa/32e8522efe13053dabb61ea6f42e9b7de362c8cd4cc16b6c3a8d80220ef4/zeroconf-0.147.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
       - pypi: ./
-      - pypi: ./vendor/tellus
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/aiohappyeyeballs-2.6.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/aiohttp-3.12.14-py310h5f69134_0.conda
@@ -219,7 +218,6 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/a8/fe/1ea0ba0896dfa47186692655b86db3214c4b7c9e0e76c7b1dc257d101ab1/varint-1.0.2.tar.gz
       - pypi: https://files.pythonhosted.org/packages/83/d6/080c8059b1b624c6654ef6373b620118c41fae935d76ac7b10582a2b41e2/zeroconf-0.147.0-cp310-cp310-macosx_11_0_arm64.whl
       - pypi: ./
-      - pypi: ./vendor/tellus
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_libgcc_mutex-0.1-conda_forge.tar.bz2
   sha256: fe51de6107f9edc7aa4f786a70f4a883943bc9d39b3bb7307c04c41410990726
@@ -313,7 +311,7 @@ packages:
 - pypi: ./
   name: animavox
   version: 0.1.0
-  sha256: 86bf14d2e79b9f752910469ac92efdb052893bc7aafebf51f8f27333115cd611
+  sha256: 8f57d6abc0a6fea485480775a00a744a6a3fde00ed09b87603caac11050c85b8
   requires_dist:
   - pycrdt>=0.12.26,<0.13
   - rich-click>=1.8.9,<2
@@ -1737,12 +1735,6 @@ packages:
   - pkg:pypi/sortedcontainers?source=hash-mapping
   size: 28657
   timestamp: 1738440459037
-- pypi: ./vendor/tellus
-  name: tellus
-  version: 0.1.0
-  sha256: b5775a6c11b583b72e93463417912af4f628205617f10c03d6541ce6d3c9b936
-  requires_python: '>=3.10'
-  editable: true
 - conda: https://conda.anaconda.org/conda-forge/linux-64/tk-8.6.13-noxft_hd72426e_102.conda
   sha256: a84ff687119e6d8752346d1d408d5cf360dee0badd487a472aa8ddedfdc219e1
   md5: a0116df4f4ed05c303811a837d5b39d8

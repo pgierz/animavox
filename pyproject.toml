@@ -68,7 +68,7 @@ pytest-trio = ">=0.8.0,<0.9"
 # Install the package in development mode
 [tool.pixi.pypi-dependencies]
 animavox = { path = ".", editable = true }
-tellus = { path = "./vendor/tellus", editable = true }
+# tellus = { path = "./vendor/tellus", editable = true }
 # libp2p = { path = "./vendor/py-libp2p", editable = true }
 # fastecdsa = { path = "./vendor/fastecdsa", editable = true }
 

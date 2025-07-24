@@ -43,8 +43,10 @@ class NetworkPeer(AbstractPeer):
             handle=handle, host=host, port=port, peer_id=peer_id or handle
         )
 
-        # Expose known_peers for backward compatibility
-        self.known_peers = self._libp2p_peer.known_peers
+    @property
+    def known_peers(self) -> dict[str, PeerInfo]:
+        """Get a dictionary of known peers."""
+        return self._libp2p_peer.known_peers
 
     @property
     def is_running(self) -> bool:
@@ -77,6 +79,8 @@ class NetworkPeer(AbstractPeer):
 
     async def start(self) -> None:
         """Start the peer's server and initialize resources."""
+        logger.debug("Starting peer...")
+        logger.debug(f"About to start inner {self._libp2p_peer=}")
         await self._libp2p_peer.start()
 
     async def stop(self) -> None:

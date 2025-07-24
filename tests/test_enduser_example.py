@@ -4,93 +4,97 @@ The end-user example
 This is how I imagine interacting with this library as an end-user, and serves
 as a reference for how I eventually want to design inner parts.
 
-Good luck, future Paul...
-
-- - - - -
-🧩 tellus: Simulation sharing & peer sync — atomic implementation checklist
-* [x] Simulation class: initial skeleton
-    * [x] Create tellus.Simulation class, constructor with name argument.
-    * [x] Add attribute to hold simulation locations (empty data structure).
-* [x] Simulation.uid attribute
-    * [x] Add public uid attribute to Simulation; allow assignment of a uuid.UUID.
-* [x] Simulation: add_location method
-    * [x] Implement .add_location(location_dict) method.
-    * [x] Accept and store locations keyed by name.
-    * [x] Handle duplicates: reject or allow replacement (decide and document).
-* [x] Location data validation
-    * [x] Enforce keys: name, hostname, type (list of str).
-    * [x] Make optional field default to False if not given.
-* [x] Simulation.locations mapping
-    * [x] Store and expose locations as a mapping by name.
-    * [x] Support membership checks: if "uni_server" in ...locations.
-* [x] Simulation: to_dict() and from_dict()
-    * [x] Implement .to_dict() serialization method (incl. locations, uid).
-    * [x] Implement .from_dict() classmethod to instantiate from dict.
-* [x] Peer class: skeleton
-    * [x] Create tellus.Peer class with handle and experiments attributes.
-* [x] Peer.register_at_network_node (stub)
-    * [x] Method stub: .register_at_network_node(address) (no-op or log).
-* [ ] Peer.get_peers_at (stub)
-    * [ ] Method stub: .get_peers_at(address) (returns list of peer handles, stubbed for test).
-* [ ] Peer.broadcast_experiments (stub)
-    * [ ] Method stub: .broadcast_experiments() (no-op).
-* [ ] Peer.recieve_experiment_updates toggle
-    * [ ] Add .recieve_experiment_updates attribute; settable boolean.
-* [ ] Test network fixture/hooks for experiment sharing
-    * [ ] Implement test fixture or hooks to simulate networked experiment propagation.
-    * [ ] When a location is added to one peer’s experiment and both peers have .recieve_experiment_updates = True, update all relevant peer copies.
-* [ ] Pass the end-user test
-    * [ ] Ensure all logic is in place so the supplied test passes as written.
- - - - - -
-
+This test demonstrates how two peers can share simulation data using the NetworkPeer API.
 """
 
+import pytest
+import json
+from typing import Any
+
 from tellus import Simulation
+import trio
 
-from animavox.network import Peer
+from animavox.network import Message, NetworkPeer
 
 
-def test_simulation_sharing_user_adds_new_location(
+def create_experiment_update_message(
+    sender: str, experiment: Simulation
+) -> dict[str, Any]:
+    """Helper to create an experiment update message."""
+    return {
+        "type": "experiment_update",
+        "sender": sender,
+        "experiment": experiment.to_dict(),
+    }
+
+
+@pytest.mark.trio  # [NOTE] Used to be:  @pytest.mark.asyncio
+async def test_simulation_sharing_user_adds_new_location(
     sample_simulation_awi_locations_with_laptop,
 ):
-    my_experiment = sample_simulation_awi_locations_with_laptop
-    # #########################################################################
-    # We have a two peer system. Let's imagine a fixture that creates two
-    # peer objects:
-    andreas = Peer(handle="little_a")
-    bernd = Peer(handle="major_b")
+    """Test that when one peer updates an experiment, other peers receive the update."""
+    # Create two peers with unique ports
+    andreas = NetworkPeer(handle="little_a", host="127.0.0.1", port=9001)
+    bernd = NetworkPeer(handle="major_b", host="127.0.0.1", port=9002)
 
-    # Peer is the "local object" that knows about your experiments:
-    # [NOTE] Important here is that the Peers use the same experiment, but
-    #        create unique objects from the same original dict representation:
-    andreas.experiments = [Simulation.from_dict(my_experiment.to_dict())]
-    bernd.experiments = [Simulation.from_dict(my_experiment.to_dict())]
+    try:
+        # Start both peers
+        await andreas.start()
+        await bernd.start()
+        # Connect the peers (in a real scenario, this would be done via discovery)
+        # Create a proper multiaddress for the peer
+        peer_addr = f"/ip4/127.0.0.1/tcp/9002/p2p/{bernd.peer_id}"
+        await andreas.connect_to_peer(peer_addr)
 
-    # We set up the peers to register at the network:
-    andreas.register_at_network_node("localhost")
-    bernd.register_at_network_node("localhost")
+        # Initialize experiments
+        andreas.experiments = [
+            Simulation.from_dict(sample_simulation_awi_locations_with_laptop.to_dict())
+        ]
+        bernd.experiments = [
+            Simulation.from_dict(sample_simulation_awi_locations_with_laptop.to_dict())
+        ]
 
-    # The peers will listen to others found at the network:
-    andreas.get_peers_at("localhost")
-    bernd.get_peers_at("localhost")
+        # Set up message handler for bernd
+        message_received = trio.Event()
 
-    # We set up the peers to broadcast:
-    andreas.broadcast_experiments()
-    bernd.broadcast_experiments()
+        async def handle_experiment_update(sender_id: str, message: Message):
+            if message.type == "experiment_update":
+                data = message.content
+                if isinstance(data, str):
+                    data = json.loads(data)
+                if data.get("type") == "experiment_update":
+                    bernd.experiments = [Simulation.from_dict(data["experiment"])]
+                    message_received.set()
 
-    # We set up the peers to share based on updates:
-    andreas.recieve_experiment_updates = True
-    bernd.recieve_experiment_updates = True
+        bernd.on_message("experiment_update")(handle_experiment_update)
 
-    # Andreas adds a location:
-    andreas.experiments[0].add_location(
-        {
+        # Andreas adds a new location
+        new_location = {
             "name": "uni_server",
-            "hostname": "learning.super_uni.edu",
-            "optional": True,
-            "type": ["disk"],
+            "type": "server",
+            "config": {
+                "protocol": "file",
+                "storage_options": {"host": "uni-server.example.com"},
+            },
+            "optional": False,
         }
-    )
+        andreas.experiments[0].add_location(new_location)
 
-    # Bernd sees this location:
-    assert "uni_server" in bernd.experiments[0].locations
+        # Broadcast the update
+        update_msg = create_experiment_update_message("andreas", andreas.experiments[0])
+        message = Message(
+            type="experiment_update", content=update_msg, sender=andreas.peer_id
+        )
+        await andreas.broadcast(message)
+
+        # Wait for message with timeout
+        with trio.fail_after(5):  # 5 second timeout
+            await message_received.wait()
+
+        # Verify the update was received
+        assert "uni_server" in bernd.experiments[0].locations
+
+    finally:
+        # Clean up
+        await andreas.stop()
+        await bernd.stop()

@@ -6,11 +6,13 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar, runtime_checkable
 
+# Local imports
 from .message import Message, PeerInfo
+from .sentinels import NetworkState
 
 # Type aliases
 MessageHandler = Callable[[str, Message], Awaitable[None]]
-StatusHandler = Callable[[str, str], Awaitable[None]]
+StatusHandler = Callable[[str, NetworkState], Awaitable[None]]
 
 # Type variable for covariant return types
 T_co = TypeVar("T_co", covariant=True)

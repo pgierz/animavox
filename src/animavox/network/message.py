@@ -1,8 +1,14 @@
 """Message class for network communication."""
 
+from __future__ import annotations
+
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
+
+# Local imports
+from .sentinels import NetworkState
 
 
 @dataclass
@@ -18,9 +24,9 @@ class Message:
     """
 
     type: str
-    content: Any
-    sender: str = ""
-    recipient: str = ""
+    content: dict[str, Any] | str | None = None
+    sender: str | None = None
+    recipient: str | None = None
     timestamp: float = field(default_factory=time.time)
 
     def __post_init__(self):
@@ -41,7 +47,7 @@ class Message:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Message":
+    def from_dict(cls, data: dict[str, Any]) -> Message:
         """Create a message from a dictionary."""
         return cls(
             type=data["type"],
@@ -59,8 +65,20 @@ class PeerInfo:
     handle: str
     host: str
     port: int
-    last_seen: float = 0.0
-    status: str = "disconnected"  # 'connected', 'disconnected', 'connecting'
+    last_seen: datetime | NetworkState = NetworkState.NEVER_BEEN_IN_A_NETWORK
+    status: NetworkState = NetworkState.DISCONNECTED
+
+    def __repr__(self) -> str:
+        """Return a nicely formatted representation string."""
+        last_seen_str = (
+            self.last_seen.isoformat(sep=" ", timespec="seconds")
+            if isinstance(self.last_seen, datetime)
+            else str(self.last_seen)
+        )
+        return (
+            f"PeerInfo(handle='{self.handle}', host='{self.host}', port={self.port}, "
+            f"last_seen={last_seen_str}, status={self.status!r})"
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert peer info to a dictionary."""
@@ -68,17 +86,27 @@ class PeerInfo:
             "handle": self.handle,
             "host": self.host,
             "port": self.port,
-            "last_seen": self.last_seen,
+            "last_seen": (
+                self.last_seen.isoformat()
+                if isinstance(self.last_seen, datetime)
+                else None
+            ),
             "status": self.status,
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "PeerInfo":
+    def from_dict(cls, data: dict[str, Any]) -> PeerInfo:
         """Create a PeerInfo from a dictionary."""
         return cls(
             handle=data["handle"],
             host=data["host"],
             port=data["port"],
-            last_seen=data.get("last_seen", 0.0),
-            status=data.get("status", "disconnected"),
+            last_seen=(
+                datetime.fromisoformat(data["last_seen"])
+                if data.get("last_seen") is not None
+                else NetworkState.NEVER_BEEN_IN_A_NETWORK
+            ),
+            status=NetworkState(data.get("status", NetworkState.DISCONNECTED))
+            if isinstance(data.get("status"), str)
+            else data.get("status", NetworkState.DISCONNECTED),
         )

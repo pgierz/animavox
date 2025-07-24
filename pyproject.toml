@@ -4,11 +4,13 @@ dependencies = [
     "pycrdt>=0.12.26,<0.13",
     "rich-click>=1.8.9,<2",
     "dpath>=2.2.0,<3", 
-    "asyncio>=3.4.3,<4", "libp2p>=0.2.9,<0.3",
+    "asyncio>=3.4.3,<4",
+    "libp2p>=0.2.9,<0.3",
+    "trio==0.30.0",  # Pinned for libp2p compatibility
 ]
 name = "animavox"
 description = "A tool for managing and versioning data structures with CRDTs"
-requires-python = ">=3.11"
+requires-python = ">=3.10,<3.11"  # Pinned to 3.10 for libp2p compatibility
 version = "0.1.0"
 
 [project.optional-dependencies]
@@ -61,6 +63,7 @@ fsspec = ">=2025.7.0,<2026"
 aiohttp = ">=3.12.14,<4"
 loguru = ">=0.7.3,<0.8"
 pip = ">=25.1.1,<26"
+pytest-trio = ">=0.8.0,<0.9"
 
 # Install the package in development mode
 [tool.pixi.pypi-dependencies]
@@ -79,10 +82,11 @@ typecheck = "mypy src/"
 
 # Test configuration
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 pythonpath = ["src"]
-addopts = "-v --cov=src --cov-report=term-missing"
+addopts = "-v --cov=src --cov-report=term-missing --asyncio-mode=auto"
 norecursedirs = [".git", "build", "dist", "*.egg-info"]
 
 # Formatting and linting

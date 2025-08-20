@@ -91,9 +91,9 @@ pip = ">=25.1.1,<26"
 # Install the package in development mode
 [tool.pixi.pypi-dependencies]
 animavox = { path = ".", editable = true }
-tellus = { path = "./vendor/tellus", editable = true }
-libp2p = { path = "./vendor/py-libp2p", editable = true }
-fastecdsa = { path = "./vendor/fastecdsa", editable = true }
+# tellus = { path = "./vendor/tellus", editable = true }
+# libp2p = { path = "./vendor/py-libp2p", editable = true }
+# fastecdsa = { path = "./vendor/fastecdsa", editable = true }
 build = ">=1.0.0"
 twine = ">=5.0.0"
 

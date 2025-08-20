@@ -20,7 +20,7 @@ jobs:
       - name: Set up pixi
         uses: prefix-dev/setup-pixi@v0.9.0
         with:
-          pixi-version: v0.28.2
+          pixi-version: v0.49.0
           cache: true
       - name: Install dependencies
         run: pixi install

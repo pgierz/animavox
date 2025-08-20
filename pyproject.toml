@@ -4,7 +4,7 @@ dependencies = [
     "pycrdt>=0.12.26,<0.13",
     "rich-click>=1.8.9,<2",
     "dpath>=2.2.0,<3", 
-    "asyncio>=3.4.3,<4",
+    "asyncio>=3.4.3,<5",
 ]
 name = "animavox"
 description = "A tool for managing and versioning data structures with CRDTs"

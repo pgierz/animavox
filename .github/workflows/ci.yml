@@ -22,6 +22,7 @@ jobs:
         with:
           pixi-version: v0.49.0
           cache: true
+          locked: false
       - name: Install dependencies
         run: pixi install
       - name: Run tests with coverage (excluding problematic integration tests)

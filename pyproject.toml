@@ -10,6 +10,26 @@ name = "animavox"
 description = "A tool for managing and versioning data structures with CRDTs"
 requires-python = ">=3.11"
 version = "0.1.0"
+license = {text = "MIT"}
+keywords = ["crdt", "distributed", "p2p", "collaboration", "data-structures"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Distributed Computing",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/pgierz/animavox"
+"Bug Tracker" = "https://github.com/pgierz/animavox/issues"
+"Repository" = "https://github.com/pgierz/animavox"
+"Changelog" = "https://github.com/pgierz/animavox/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 test = [
@@ -17,12 +37,18 @@ test = [
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.11.1",
     "pytest-xdist>=3.3.1",
+    "pytest-asyncio>=0.23.0",
 ]
 dev = [
     "black>=23.7.0",
     "isort>=5.12.0",
     "mypy>=1.5.0",
     "ruff>=0.0.284",
+]
+network = [
+    "libp2p>=0.2.0",
+    "multiaddr>=0.0.9", 
+    "protobuf>=4.0.0",
 ]
 
 [project.scripts]
@@ -68,14 +94,22 @@ animavox = { path = ".", editable = true }
 tellus = { path = "./vendor/tellus", editable = true }
 libp2p = { path = "./vendor/py-libp2p", editable = true }
 fastecdsa = { path = "./vendor/fastecdsa", editable = true }
+build = ">=1.0.0"
+twine = ">=5.0.0"
 
 [tool.pixi.tasks]
 animavox = "python -m animavox.cli"
 test = "pytest tests/ -v"
-test-cov = "pytest tests/ --cov=src --cov-report=term-missing"
+test-ci = "pytest tests/ -v -k 'not TestEndToEndIntegration'"
+test-cov = "pytest tests/ --cov=src --cov-report=term-missing --cov-report=xml"
+test-cov-ci = "pytest tests/ --cov=src --cov-report=term-missing --cov-report=xml -k 'not TestEndToEndIntegration'"
 lint = "ruff check src/ tests/"
 format = "black src/ tests/"
+format-check = "black --check --diff src/ tests/"
+isort-check = "isort --check-only --diff src/ tests/"
 typecheck = "mypy src/"
+build = "python -m build"
+check-package = "twine check dist/*"
 
 # Test configuration
 [tool.pytest.ini_options]

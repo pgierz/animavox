@@ -161,47 +161,5 @@ def test_simple_object_serialize_transaction(simple_object):
         assert new_txn.transaction_id == txn.transaction_id
 
 
-def test_apply_transaction_history(simple_object, tmp_path):
-    """Test applying a saved transaction history to a new object."""
-    # Save transaction history
-    save_dir = tmp_path / "transaction_history"
-    simple_object.save_transaction_history(str(save_dir))
-    
-    # Verify the transaction files were created
-    txn_files = list(save_dir.glob("*.json"))
-    assert len(txn_files) > 0, "No transaction files were created"
-    
-    # Load the transaction history
-    # This might return either Transaction objects or dicts, depending on implementation
-    loaded_items = TelepathicObject.load_transaction_history(str(save_dir))
-    assert len(loaded_items) > 0, "No transactions were loaded"
-    
-    # Create a new object to apply transactions to
-    new_obj = TelepathicObject()
-    
-    # Apply each transaction individually
-    for item in loaded_items:
-        if isinstance(item, TelepathicObjectTransaction):
-            # If we got Transaction objects directly, just apply them
-            new_obj.apply_transaction(item)
-        elif isinstance(item, dict):
-            # If we got dicts, convert to Transaction objects first
-            txn = TelepathicObjectTransaction.from_dict(item)
-            new_obj.apply_transaction(txn)
-        else:
-            raise ValueError(f"Unexpected transaction type: {type(item)}")
-    
-    # Get the data from both objects for comparison
-    original_data = simple_object.to_dict()
-    new_data = new_obj.to_dict()
-    
-    # Extract just the 'data' part if it exists, otherwise compare the whole dict
-    if 'data' in original_data and 'data' in new_data:
-        original_compare = original_data['data']
-        new_compare = new_data['data']
-    else:
-        original_compare = original_data
-        new_compare = new_data
-    
-    # Compare the data
-    assert new_compare == original_compare, "The data after applying transactions doesn't match the original"
+# Note: test_apply_transaction_history removed - old transaction loading functionality
+# is deprecated in favor of the new distributed CRDT synchronization system

@@ -48,8 +48,8 @@ class MockMessage:
 
     @classmethod
     def from_json(cls, json_str):
-        import json
         import base64
+        import json
 
         data = json.loads(json_str)
         content = data["content"].copy()
@@ -129,11 +129,9 @@ class TestCRDTSyncMessageTypes:
 
     def test_crdt_message_types_defined(self):
         """Test that CRDT sync message type constants are defined."""
-        from animavox.telepathic_objects import (
-            CRDT_STATE_REQUEST,
-            CRDT_STATE_RESPONSE,
-            CRDT_OPERATION,
-        )
+        from animavox.telepathic_objects import (CRDT_OPERATION,
+                                                 CRDT_STATE_REQUEST,
+                                                 CRDT_STATE_RESPONSE)
 
         assert CRDT_STATE_REQUEST == "crdt_state_request"
         assert CRDT_STATE_RESPONSE == "crdt_state_response"
@@ -770,8 +768,8 @@ class TestEndToEndIntegration:
     @pytest.mark.asyncio
     async def test_two_peer_sync(self):
         """Test synchronization between two real DistributedTelepathicObject instances."""
-        from animavox.telepathic_objects import DistributedTelepathicObject
         from animavox.network import NetworkPeer
+        from animavox.telepathic_objects import DistributedTelepathicObject
 
         # Create two peers
         peer1 = NetworkPeer(handle="peer1", port=0)
@@ -820,8 +818,8 @@ class TestEndToEndIntegration:
     @pytest.mark.asyncio
     async def test_three_peer_mesh_sync(self):
         """Test synchronization in a three-peer mesh network."""
-        from animavox.telepathic_objects import DistributedTelepathicObject
         from animavox.network import NetworkPeer
+        from animavox.telepathic_objects import DistributedTelepathicObject
 
         # Create three peers
         peers = [NetworkPeer(handle=f"peer{i}", port=0) for i in range(3)]

@@ -316,6 +316,7 @@ class LiveDisplay:
             display.push_shell("ls -la", title="Directory Contents")
         """
         import subprocess
+
         from rich.panel import Panel
         from rich.syntax import Syntax
 

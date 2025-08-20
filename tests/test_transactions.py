@@ -3,11 +3,8 @@ from datetime import datetime
 
 import pytest
 
-from animavox.telepathic_objects import (
-    DateTimeEncoder,
-    TelepathicObject,
-    TelepathicObjectTransaction,
-)
+from animavox.telepathic_objects import (DateTimeEncoder, TelepathicObject,
+                                         TelepathicObjectTransaction)
 
 
 @pytest.fixture()

@@ -721,8 +721,8 @@ def create_crdt_state_request(object_id: str):
             self.content = content
 
         def to_json(self):
-            import json
             import base64
+            import json
 
             # Handle bytes serialization
             content = self.content.copy()
@@ -748,8 +748,8 @@ def create_crdt_state_response(object_id: str, state_data: bytes):
             self.content = content
 
         def to_json(self):
-            import json
             import base64
+            import json
 
             # Handle bytes serialization
             content = self.content.copy()
@@ -779,8 +779,8 @@ def create_crdt_operation(object_id: str, operation_data: bytes):
             self.content = content
 
         def to_json(self):
-            import json
             import base64
+            import json
 
             # Handle bytes serialization
             content = self.content.copy()
